@@ -1,4 +1,4 @@
-const PAGE_SIZE = 30;
+const PAGE_SIZE = 10;
 const ALL = "all";
 const MAX_AUTHORS = 6;
 const VENUE_CHIP_LIMIT = 12;
@@ -25,7 +25,7 @@ const state = {
   majorVenues: [],
   accepted: false,
   sort: "published",
-  offset: 0,
+  page: 1,
   total: 0,
   topics: [],
   totalCount: 0,
@@ -76,6 +76,7 @@ function readUrl() {
   if (state.venue && !state.scope) state.scope = "any";
   state.accepted = params.get("accepted") === "1";
   if (SORTS.includes(params.get("sort"))) state.sort = params.get("sort");
+  state.page = Math.max(1, Number.parseInt(params.get("page"), 10) || 1);
   $("search").value = state.q;
   $("accepted-only").checked = state.accepted;
   $("sort").value = state.sort;
@@ -89,6 +90,7 @@ function writeUrl() {
   if (state.venue) params.set("venue", state.venue);
   if (state.accepted) params.set("accepted", "1");
   if (state.sort !== "published") params.set("sort", state.sort);
+  if (state.page > 1) params.set("page", state.page);
   history.replaceState(null, "", `?${params}`);
 }
 
@@ -161,7 +163,7 @@ function selectTopic(key) {
   state.topic = key;
   state.venueFetchStatus = null;
   loadTopics().then(loadVenueFetchStatus).catch(showError);
-  loadPapers(true);
+  loadPapers();
 }
 
 /* ---------- fetching by venue ---------- */
@@ -266,42 +268,107 @@ function initYearOptions() {
 }
 
 /* ---------- papers ---------- */
-async function loadPapers(reset) {
-  if (reset) state.offset = 0;
+/**
+ * page: 불러올 페이지 (필터를 바꿨으면 1).
+ * refreshVenues: 제출처 칩·탭 개수도 다시 센다 (페이지만 넘길 때는 개수가 같으므로 생략).
+ * scroll: 불러온 뒤 목록 맨 위로 스크롤.
+ */
+async function loadPapers({ page = 1, refreshVenues = true, scroll = false } = {}) {
+  state.page = Math.max(1, page);
   const requestId = ++state.requestId;
   writeUrl();
 
   const params = filterParams();
   params.set("sort", state.sort);
   params.set("limit", PAGE_SIZE);
-  params.set("offset", state.offset);
+  params.set("offset", (state.page - 1) * PAGE_SIZE);
 
-  $("btn-more").disabled = true;
   try {
     const [data, venueData] = await Promise.all([
       api(`/api/papers?${params}`),
-      reset ? api(`/api/venues?${filterParams({ withVenue: false })}`) : null,
+      refreshVenues ? api(`/api/venues?${filterParams({ withVenue: false })}`) : null,
     ]);
     if (requestId !== state.requestId) return; // 더 최근 요청이 있으면 버린다
+
+    // URL로 들어왔거나 논문 수가 줄어 범위를 벗어난 페이지는 마지막 페이지로
+    const lastPage = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+    if (state.page > lastPage) return loadPapers({ page: lastPage, refreshVenues, scroll });
 
     if (venueData) {
       state.venues = venueData.venues;
       state.majorVenues = venueData.major;
       renderVenues();
     }
-    if (reset) $("papers").replaceChildren();
     const nodes = data.items.map(renderPaper);
-    $("papers").append(...nodes);
+    $("papers").replaceChildren(...nodes);
     nodes.forEach(hideToggleIfShort);
 
     state.total = data.total;
-    state.offset += data.items.length;
     renderSummary();
+    renderPagination();
+    if (scroll) document.querySelector(".list-header").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) {
     showError(err);
-  } finally {
-    $("btn-more").disabled = false;
   }
+}
+
+/** 페이지 번호 목록. 현재 페이지 주변(radius)과 처음·끝만 보이고 나머지는 "…". */
+function pageItems(current, last, radius) {
+  const pages = [1, last];
+  for (let p = current - radius; p <= current + radius; p++) pages.push(p);
+  const sorted = [...new Set(pages)].filter((p) => p >= 1 && p <= last).sort((a, b) => a - b);
+  const items = [];
+  for (const p of sorted) {
+    const prev = items.at(-1);
+    if (prev !== undefined && p - prev === 2) items.push(prev + 1); // 한 칸만 비면 "…" 대신 번호
+    else if (prev !== undefined && p - prev > 2) items.push("…");
+    items.push(p);
+  }
+  return items;
+}
+
+const narrowScreen = window.matchMedia("(max-width: 560px)");
+
+function renderPagination() {
+  const nav = $("pagination");
+  const last = Math.ceil(state.total / PAGE_SIZE);
+  nav.hidden = last <= 1;
+  if (last <= 1) {
+    nav.replaceChildren();
+    return;
+  }
+
+  const pageButton = (label, page, { current = false, disabled = false, ariaLabel }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "page-btn";
+    btn.textContent = label;
+    btn.setAttribute("aria-label", ariaLabel);
+    if (current) btn.setAttribute("aria-current", "page");
+    btn.disabled = disabled;
+    if (!current && !disabled) btn.addEventListener("click", () => goToPage(page));
+    return btn;
+  };
+  const numbers = pageItems(state.page, last, narrowScreen.matches ? 1 : 2).map((item) => {
+    if (item === "…") {
+      const gap = document.createElement("span");
+      gap.className = "page-gap";
+      gap.textContent = "…";
+      return gap;
+    }
+    return pageButton(String(item), item, { current: item === state.page, ariaLabel: `${item}페이지` });
+  });
+  // 좁은 화면에서는 한 줄에 들어가도록 이전/다음을 기호만 표시
+  const [prevLabel, nextLabel] = narrowScreen.matches ? ["‹", "›"] : ["‹ 이전", "다음 ›"];
+  nav.replaceChildren(
+    pageButton(prevLabel, state.page - 1, { disabled: state.page === 1, ariaLabel: "이전 페이지" }),
+    ...numbers,
+    pageButton(nextLabel, state.page + 1, { disabled: state.page === last, ariaLabel: "다음 페이지" }),
+  );
+}
+
+function goToPage(page) {
+  loadPapers({ page, refreshVenues: false, scroll: true });
 }
 
 /* ---------- venues ---------- */
@@ -388,7 +455,7 @@ function selectVenue(venue) {
   if (venue === state.venue) return;
   applyVenue(venue);
   renderVenues();
-  loadPapers(true);
+  loadPapers();
 }
 
 function selectScope(scope) {
@@ -398,7 +465,7 @@ function selectScope(scope) {
   if (!scope || (scope === "major" && !isMajor(state.venue))) state.venue = "";
   state.venuesExpanded = false;
   renderVenues();
-  loadPapers(true);
+  loadPapers();
 }
 
 function venueLabel(p) {
@@ -409,16 +476,17 @@ function venueLabel(p) {
 }
 
 function renderSummary() {
-  const shown = state.offset;
+  const first = (state.page - 1) * PAGE_SIZE + 1;
+  const last = Math.min(state.page * PAGE_SIZE, state.total);
   const filters = [
     state.q && `"${state.q}" 검색`,
     state.venue || SCOPE_LABELS[state.scope],
     state.accepted && "채택",
   ].filter(Boolean);
   $("summary").textContent = state.total
-    ? `${filters.length ? `${filters.join(" · ")} — ` : ""}${state.total.toLocaleString()}편 중 ${shown.toLocaleString()}편 표시`
+    ? `${filters.length ? `${filters.join(" · ")} — ` : ""}${state.total.toLocaleString()}편 중 ` +
+      `${first.toLocaleString()}–${last.toLocaleString()}`
     : "";
-  $("btn-more").hidden = shown >= state.total;
 
   const empty = $("empty");
   empty.hidden = state.total > 0;
@@ -605,7 +673,7 @@ async function runMetrics({ auto = false } = {}) {
         ? `${r.checked.toLocaleString()}편의 인용 수를 확인했습니다. HF 추천 ${r.hf_matched}편 반영.`
         : "모든 논문의 인용·추천 수가 최신입니다 (24시간 이내에 확인함).");
     }
-    await loadPapers(true);
+    await loadPapers({ page: state.page, refreshVenues: false }); // 보던 페이지 유지
   } catch (err) {
     showError(err);
   } finally {
@@ -656,7 +724,7 @@ async function runFetch(mode, { venue = null, year = null } = {}) {
     if (r.truncated) msg += " 가져오기 상한에 도달해 중간에 빠진 논문이 있을 수 있습니다.";
     toast(msg);
     if (venue) applyVenue(venue); // 가져온 학회의 논문을 바로 보여준다
-    if (state.topic === topic.key) await loadPapers(true);
+    if (state.topic === topic.key) await loadPapers();
   } catch (err) {
     showError(err);
   } finally {
@@ -691,7 +759,7 @@ $("search").addEventListener("input", (e) => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     state.q = e.target.value.trim();
-    loadPapers(true);
+    loadPapers();
   }, 250);
 });
 
@@ -708,12 +776,12 @@ for (const tab of document.querySelectorAll(".scope-tab")) {
 
 $("accepted-only").addEventListener("change", (e) => {
   state.accepted = e.target.checked;
-  loadPapers(true);
+  loadPapers();
 });
 
 $("sort").addEventListener("change", (e) => {
   state.sort = e.target.value;
-  loadPapers(true);
+  loadPapers();
 });
 
 $("btn-metrics").addEventListener("click", () => runMetrics());
@@ -724,10 +792,10 @@ $("vf-new").addEventListener("click", () => runFetch("new", venueFetchSelection(
 $("vf-older").addEventListener("click", () => runFetch("older", venueFetchSelection()));
 $("btn-new").addEventListener("click", () => runFetch("new"));
 $("btn-older").addEventListener("click", () => runFetch("older"));
-$("btn-more").addEventListener("click", () => loadPapers(false));
+narrowScreen.addEventListener("change", renderPagination);
 
 readUrl();
 initYearOptions();
 loadTopics()
-  .then(() => loadPapers(true))
+  .then(() => loadPapers({ page: state.page }))
   .catch(showError);
