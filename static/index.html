@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PaperPortal</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <div>
+        <h1 class="brand">PaperPortal</h1>
+        <p class="tagline">arXiv LLM · Vision 논문 · <span id="db-total">-</span>편 저장됨</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <nav class="tabs" id="tabs" role="tablist" aria-label="토픽"></nav>
+
+    <section class="toolbar">
+      <label class="search">
+        <span class="visually-hidden">검색</span>
+        <input id="search" type="search" placeholder="제목, 초록, 저자 검색  ( / )" autocomplete="off">
+      </label>
+      <div class="fetch-controls" id="fetch-controls">
+        <span class="fetch-status" id="fetch-status"></span>
+        <button id="btn-metrics" class="btn" type="button"
+                title="Semantic Scholar 인용 수와 Hugging Face 추천 수를 가져옵니다 (24시간 이내에 확인한 논문은 건너뜀)">인용·추천 업데이트</button>
+        <button id="btn-venue-fetch" class="btn btn-toggle" type="button" aria-expanded="false"
+                aria-controls="venue-fetch">학회별 가져오기</button>
+        <button id="btn-older" class="btn" type="button">이전 논문 더 가져오기</button>
+        <button id="btn-new" class="btn btn-primary" type="button">새 논문 가져오기</button>
+      </div>
+    </section>
+
+    <section class="venue-fetch" id="venue-fetch" aria-label="학회별 가져오기" hidden>
+      <div class="venue-fetch-row">
+        <label class="field">
+          <span>학회</span>
+          <select id="vf-venue"></select>
+        </label>
+        <label class="field">
+          <span>연도</span>
+          <select id="vf-year"></select>
+        </label>
+        <div class="venue-fetch-actions">
+          <button id="vf-new" class="btn btn-primary" type="button">가져오기</button>
+          <button id="vf-older" class="btn" type="button">이전 것 더 가져오기</button>
+        </div>
+      </div>
+      <p class="venue-fetch-status" id="vf-status" aria-live="polite"></p>
+      <p class="venue-fetch-hint" id="vf-hint"></p>
+    </section>
+
+    <section class="venue-bar" aria-label="제출처">
+      <div class="venue-bar-top">
+        <span class="venue-bar-label">제출처</span>
+        <div class="venue-scope" role="tablist" aria-label="제출처 범위">
+          <button class="scope-tab" type="button" role="tab" data-scope="">전체 논문</button>
+          <button class="scope-tab" type="button" role="tab" data-scope="major"
+                  title="config.py의 MAJOR_VENUES">주요 학회<span class="count"></span></button>
+          <button class="scope-tab" type="button" role="tab" data-scope="any">모든 학회<span class="count"></span></button>
+        </div>
+        <label class="accepted-toggle">
+          <input type="checkbox" id="accepted-only">
+          채택된 논문만
+        </label>
+      </div>
+      <div class="venue-chips" id="venue-chips" hidden></div>
+    </section>
+
+    <div class="list-header">
+      <p class="summary" id="summary" aria-live="polite"></p>
+      <label class="sort">
+        정렬
+        <select id="sort">
+          <option value="published">최신순</option>
+          <option value="importance">중요도순</option>
+          <option value="citations">인용순</option>
+          <option value="influential">주요 인용순</option>
+          <option value="hf">HF 추천순</option>
+        </select>
+      </label>
+    </div>
+    <ol class="paper-list" id="papers"></ol>
+    <div class="empty" id="empty" hidden></div>
+    <div class="list-footer">
+      <button id="btn-more" class="btn" type="button" hidden>더 보기</button>
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <template id="paper-tpl">
+    <li class="paper">
+      <div class="paper-main">
+        <div class="paper-meta">
+          <button class="venue-badge" type="button" hidden></button>
+          <time class="date"></time>
+          <span class="primary-cat"></span>
+          <span class="topics"></span>
+          <span class="revised"></span>
+        </div>
+        <h2 class="paper-title"><a target="_blank" rel="noopener"></a></h2>
+        <p class="authors"></p>
+        <p class="comment" hidden></p>
+        <p class="abstract"></p>
+        <div class="paper-actions">
+          <button class="link-btn toggle-abstract" type="button">초록 펼치기</button>
+          <a class="link-btn abs-link" target="_blank" rel="noopener">arXiv</a>
+          <a class="link-btn pdf-link" target="_blank" rel="noopener">PDF</a>
+          <span class="categories"></span>
+        </div>
+      </div>
+      <aside class="paper-stats" aria-label="인용·중요도">
+        <div class="score">
+          <span class="score-value"></span>
+          <span class="score-label"></span>
+          <span class="score-bar"><span class="score-fill"></span></span>
+        </div>
+        <dl class="stats">
+          <div class="stat" data-stat="citations"><dt>인용</dt><dd><a target="_blank" rel="noopener"></a></dd></div>
+          <div class="stat" data-stat="influential"><dt>주요 인용</dt><dd><a target="_blank" rel="noopener"></a></dd></div>
+          <div class="stat" data-stat="hf"><dt>HF 추천</dt><dd><a target="_blank" rel="noopener"></a></dd></div>
+        </dl>
+      </aside>
+    </li>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
