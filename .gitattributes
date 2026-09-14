@@ -1,0 +1,2 @@
+# SQLite DB는 줄바꿈 변환(autocrlf)이나 텍스트 diff 없이 그대로 저장
+*.db binary

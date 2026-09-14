@@ -1,3 +1,6 @@
 .venv/
 __pycache__/
-data/
+# papers.db는 저장소에 포함하고, SQLite 실행 중 임시 파일만 제외
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
